@@ -1,0 +1,81 @@
+Drop view if exists wickets_taken_by_venue;
+Drop view if exists runs_conceded_by_venue;
+
+create view wickets_taken_by_venue as (
+With cte as (
+select t5.Season_Year, t4.Venue_Id, t6.Venue_Name, t1.Match_Id, t1.Innings_No, t1.Over_Id, t1.Ball_Id, t1.Bowler, t2.Kind_Out, t3.Out_Name
+from ball_by_ball t1
+join wicket_taken t2
+on t1.Match_Id=t2.Match_Id and t1.Over_Id=t2.Over_Id and t1.Ball_Id=t2.Ball_Id and t1.Innings_No=t2.Innings_No
+join out_type t3
+on t2.Kind_Out=t3.Out_Id
+join matches t4
+on t1.Match_Id=t4.Match_Id
+join season t5
+on t4.Season_Id=t5.Season_Id
+join venue t6
+on t4.Venue_Id=t6.Venue_Id
+where t3.Out_Name not in ("run out","retired hurt","obstructing the field")
+),
+cte2 as (
+select Venue_Id, Venue_Name, Bowler, count(Out_Name) as Total_Wickets from cte
+group by 1,2,3
+order by Venue_Id, Total_Wickets desc
+)
+select c1.Venue_Id, c1.Venue_Name, c2.Player_Id, c2.Player_Name, c1.Total_Wickets
+from cte2 c1
+join player c2
+on c1.Bowler=c2.Player_Id
+order by c1.Venue_Id, c1.Total_Wickets desc
+);
+create view runs_conceded_by_venue as (
+with cte as (
+select t4.Season_Year, t3.Venue_Id, t5.Venue_Name, t1.Match_Id, t1.Innings_No, t1.Over_Id, t1.Ball_Id, t1.Bowler, t2.Runs_Scored
+from ball_by_ball t1
+join batsman_scored t2
+on t1.Match_Id=t2.Match_Id and t1.Over_Id=t2.Over_Id and t1.Ball_Id=t2.Ball_Id and t1.Innings_No=t2.Innings_No
+join matches t3
+on t1.Match_Id=t3.Match_Id
+join season t4
+on t3.Season_Id=t4.Season_Id
+join venue t5
+on t3.Venue_Id=t5.Venue_Id
+),
+cte2 as (
+select t6.Season_Year, t4.Venue_Id, t5.Venue_Name, t1.Match_Id, t1.Innings_No, t1.Over_Id, t1.Ball_Id, t1.Bowler, t2.Extra_Type_Id, t2.Extra_Runs, t3.Extra_Name
+from ball_by_ball t1
+left join extra_runs t2
+on t1.Match_Id=t2.Match_Id and t1.Over_Id=t2.Over_Id and t1.Ball_Id=t2.Ball_Id and t1.Innings_No=t2.Innings_No
+left join extra_type t3
+on t2.Extra_Type_Id=t3.Extra_Id
+join matches t4
+on t1.Match_Id=t4.Match_Id
+join venue t5
+on t4.Venue_Id=t5.Venue_Id
+join season t6
+on t4.Season_Id=t6.Season_Id
+),
+cte3 as (
+select Venue_Id, Venue_Name, Bowler, sum(Runs_Scored) as Runs_Concede from cte
+group by 1,2,3
+),
+cte4 as (
+select Venue_Id, Venue_Name, Bowler, sum(Extra_Runs) as Extras_Concede from cte2
+where Extra_Type_Id is not null and Extra_Name in ("wides","noballs")
+group by 1,2,3
+)
+select c1.Venue_Id, c1.Venue_Name, c1.Bowler, c1.Runs_Concede, c2.Extras_Concede, (c1.Runs_Concede+coalesce(c2.Extras_Concede,0)) as Total_Runs_Conceded
+from cte3 c1
+left join cte4 c2
+on c1.Bowler=c2.Bowler and c1.Venue_Id=c2.Venue_Id
+order by c1.Venue_Id
+);
+with cte as (
+select t1.Venue_Id, t1.Venue_Name, t1.Player_Id, t1.Player_Name, t2.Total_Runs_Conceded, t1.Total_Wickets, round((t2.Total_Runs_Conceded/t1.Total_Wickets),2) as Bowling_Average
+from wickets_taken_by_venue t1
+join runs_conceded_by_venue t2
+on t1.Venue_Id=t2.Venue_Id and t1.Player_Id=t2.Bowler
+)
+select *, dense_rank() over(partition by Venue_Name order by Bowling_Average) as Ranking
+from cte
+order by Venue_Id;
